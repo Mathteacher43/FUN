@@ -102,9 +102,59 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        // ==================== Storage 래퍼 (localStorage 사용) ====================
+        
+        const Storage = {
+            get(key) {
+                try {
+                    const value = localStorage.getItem(key);
+                    return value;
+                } catch (error) {
+                    console.error('Storage get error:', error);
+                    return null;
+                }
+            },
+            
+            set(key, value) {
+                try {
+                    localStorage.setItem(key, value);
+                    return true;
+                } catch (error) {
+                    console.error('Storage set error:', error);
+                    return false;
+                }
+            },
+            
+            delete(key) {
+                try {
+                    localStorage.removeItem(key);
+                    return true;
+                } catch (error) {
+                    console.error('Storage delete error:', error);
+                    return false;
+                }
+            },
+            
+            list(prefix = '') {
+                try {
+                    const keys = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key && key.startsWith(prefix)) {
+                            keys.push(key);
+                        }
+                    }
+                    return keys;
+                } catch (error) {
+                    console.error('Storage list error:', error);
+                    return [];
+                }
+            }
+        };
+
         // ==================== 보안 유틸리티 ====================
         
-        // 간단한 해시 함수 (실제 프로덕션에서는 서버 사이드에서 bcrypt 등 사용)
+        // 간단한 해시 함수
         async function hashPassword(password, salt = '') {
             const text = salt + password + 'SECRET_SALT_2024';
             const msgBuffer = new TextEncoder().encode(text);
@@ -160,7 +210,7 @@
             '미친', '또라이', '염병', '엿', '개자식', '새끼', '년', 
             '쓰레기', '존나', 'fuck', 'shit', 'bitch', 'ass',
             '꺼져', '죽어', '멍청', '바보', '등신', '놈',
-            '애미', '애비', '창녀', '썅', '느금', '빨갱이'
+            '애미', '애비', '창녀', '썅', '느금'
         ];
 
         function filterProfanity(text) {
@@ -172,62 +222,6 @@
             return filtered;
         }
 
-        // ==================== Storage 유틸리티 ====================
-        
-        const Storage = {
-            // 안전한 get
-            async get(key, shared = false) {
-                try {
-                    const result = await window.storage.get(key, shared);
-                    return result;
-                } catch (error) {
-                    console.log(`Storage get error for key ${key}:`, error.message);
-                    return null;
-                }
-            },
-            
-            // 안전한 set (재시도 로직 포함)
-            async set(key, value, shared = false, retries = 3) {
-                for (let i = 0; i < retries; i++) {
-                    try {
-                        const result = await window.storage.set(key, value, shared);
-                        if (result) {
-                            return result;
-                        }
-                        // 실패 시 대기 후 재시도
-                        await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
-                    } catch (error) {
-                        console.log(`Storage set attempt ${i + 1} failed:`, error.message);
-                        if (i === retries - 1) {
-                            throw error;
-                        }
-                        await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
-                    }
-                }
-                throw new Error('Storage set failed after retries');
-            },
-            
-            // 안전한 delete
-            async delete(key, shared = false) {
-                try {
-                    return await window.storage.delete(key, shared);
-                } catch (error) {
-                    console.log(`Storage delete error:`, error.message);
-                    return null;
-                }
-            },
-            
-            // 안전한 list
-            async list(prefix = '', shared = false) {
-                try {
-                    return await window.storage.list(prefix, shared);
-                } catch (error) {
-                    console.log(`Storage list error:`, error.message);
-                    return { keys: [] };
-                }
-            }
-        };
-
         // ==================== 로그인/회원가입 컴포넌트 ====================
         
         function AuthScreen({ onLogin }) {
@@ -237,12 +231,12 @@
             const [confirmPassword, setConfirmPassword] = useState('');
             const [error, setError] = useState('');
             const [loading, setLoading] = useState(false);
-            const [debugInfo, setDebugInfo] = useState('');
+            const [success, setSuccess] = useState('');
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
                 setError('');
-                setDebugInfo('');
+                setSuccess('');
                 setLoading(true);
 
                 try {
@@ -266,17 +260,15 @@
 
                     if (isLogin) {
                         // ===== 로그인 =====
-                        setDebugInfo('사용자 정보 확인 중...');
+                        const userDataStr = Storage.get(`user:${cleanUsername}`);
                         
-                        const userResult = await Storage.get(`user:${cleanUsername}`, true);
-                        
-                        if (!userResult || !userResult.value) {
+                        if (!userDataStr) {
                             setError('존재하지 않는 아이디입니다.');
                             setLoading(false);
                             return;
                         }
 
-                        const userData = JSON.parse(userResult.value);
+                        const userData = JSON.parse(userDataStr);
                         const hashedPassword = await hashPassword(cleanPassword, userData.salt);
 
                         if (userData.password !== hashedPassword) {
@@ -286,8 +278,8 @@
                         }
 
                         // 로그인 성공
-                        setDebugInfo('로그인 성공!');
-                        onLogin(cleanUsername);
+                        setSuccess('로그인 성공!');
+                        setTimeout(() => onLogin(cleanUsername), 300);
                         
                     } else {
                         // ===== 회원가입 =====
@@ -299,20 +291,17 @@
                             return;
                         }
 
-                        setDebugInfo('중복 확인 중...');
-                        
                         // 중복 확인
-                        const existingUser = await Storage.get(`user:${cleanUsername}`, true);
-                        if (existingUser && existingUser.value) {
+                        const existingUser = Storage.get(`user:${cleanUsername}`);
+                        if (existingUser) {
                             setError('이미 존재하는 아이디입니다.');
                             setLoading(false);
                             return;
                         }
 
-                        setDebugInfo('계정 생성 중...');
-
                         // Salt 생성
-                        const salt = Math.random().toString(36).substring(2, 15);
+                        const salt = Math.random().toString(36).substring(2, 15) + 
+                                    Math.random().toString(36).substring(2, 15);
                         const hashedPassword = await hashPassword(cleanPassword, salt);
 
                         const userData = {
@@ -322,39 +311,35 @@
                             createdAt: new Date().toISOString()
                         };
 
-                        // 저장 (재시도 포함)
-                        const saveResult = await Storage.set(
-                            `user:${cleanUsername}`, 
-                            JSON.stringify(userData), 
-                            true,
-                            5 // 5번 재시도
-                        );
+                        // 저장
+                        const saveResult = Storage.set(`user:${cleanUsername}`, JSON.stringify(userData));
 
                         if (!saveResult) {
-                            throw new Error('저장 실패');
+                            setError('회원가입 중 오류가 발생했습니다. 다시 시도해주세요.');
+                            setLoading(false);
+                            return;
                         }
 
-                        setDebugInfo('가입 완료 확인 중...');
-                        
                         // 저장 확인
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        const verifyResult = await Storage.get(`user:${cleanUsername}`, true);
-                        
-                        if (!verifyResult || !verifyResult.value) {
-                            throw new Error('저장 검증 실패');
+                        const verifyResult = Storage.get(`user:${cleanUsername}`);
+                        if (!verifyResult) {
+                            setError('회원가입 검증에 실패했습니다. 다시 시도해주세요.');
+                            setLoading(false);
+                            return;
                         }
 
                         // 회원가입 성공
-                        alert('✅ 회원가입이 완료되었습니다!\n이제 로그인해주세요.');
-                        setIsLogin(true);
-                        setPassword('');
-                        setConfirmPassword('');
-                        setDebugInfo('');
+                        setSuccess('회원가입이 완료되었습니다!');
+                        setTimeout(() => {
+                            setIsLogin(true);
+                            setPassword('');
+                            setConfirmPassword('');
+                            setSuccess('');
+                        }, 1500);
                     }
                 } catch (error) {
                     console.error('인증 오류:', error);
                     setError(`오류가 발생했습니다: ${error.message}`);
-                    setDebugInfo('');
                 } finally {
                     setLoading(false);
                 }
@@ -405,7 +390,7 @@
                             onClick={() => {
                                 setIsLogin(true);
                                 setError('');
-                                setDebugInfo('');
+                                setSuccess('');
                             }}
                             style={{
                                 flex: 1,
@@ -428,7 +413,7 @@
                             onClick={() => {
                                 setIsLogin(false);
                                 setError('');
-                                setDebugInfo('');
+                                setSuccess('');
                             }}
                             style={{
                                 flex: 1,
@@ -465,6 +450,7 @@
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
                                 disabled={loading}
+                                autoComplete="username"
                                 style={{
                                     width: '100%',
                                     padding: '14px 16px',
@@ -496,6 +482,7 @@
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 disabled={loading}
+                                autoComplete={isLogin ? "current-password" : "new-password"}
                                 style={{
                                     width: '100%',
                                     padding: '14px 16px',
@@ -528,6 +515,7 @@
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     disabled={loading}
+                                    autoComplete="new-password"
                                     style={{
                                         width: '100%',
                                         padding: '14px 16px',
@@ -559,17 +547,18 @@
                             </div>
                         )}
 
-                        {debugInfo && (
+                        {success && (
                             <div style={{
-                                background: '#f0f9ff',
-                                color: '#0369a1',
+                                background: '#f0fdf4',
+                                color: '#15803d',
                                 padding: '14px',
                                 borderRadius: '10px',
                                 marginBottom: '20px',
                                 fontSize: '14px',
-                                border: '1px solid #bae6fd'
+                                border: '1px solid #86efac',
+                                fontWeight: '500'
                             }}>
-                                ℹ️ {debugInfo}
+                                ✅ {success}
                             </div>
                         )}
 
@@ -609,7 +598,7 @@
                                 color: '#4a5568',
                                 lineHeight: '1.6'
                             }}>
-                                <strong>보안 정책:</strong><br/>
+                                <strong>🔒 보안 정책:</strong><br/>
                                 • 비밀번호는 SHA-256으로 해시화됩니다<br/>
                                 • XSS 공격 방지 필터 적용<br/>
                                 • 입력값 검증 및 새니타이징<br/>
@@ -634,7 +623,7 @@
 
             useEffect(() => {
                 loadMessages();
-                messageLoadInterval.current = setInterval(loadMessages, 1500);
+                messageLoadInterval.current = setInterval(loadMessages, 1000);
                 return () => {
                     if (messageLoadInterval.current) {
                         clearInterval(messageLoadInterval.current);
@@ -644,7 +633,7 @@
 
             useEffect(() => {
                 updateOnlineStatus();
-                onlineUpdateInterval.current = setInterval(updateOnlineStatus, 5000);
+                onlineUpdateInterval.current = setInterval(updateOnlineStatus, 3000);
                 return () => {
                     if (onlineUpdateInterval.current) {
                         clearInterval(onlineUpdateInterval.current);
@@ -656,11 +645,11 @@
                 messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             }, [messages]);
 
-            const loadMessages = async () => {
-                const result = await Storage.get('chat:messages', true);
-                if (result && result.value) {
+            const loadMessages = () => {
+                const messagesStr = Storage.get('chat:messages');
+                if (messagesStr) {
                     try {
-                        const msgs = JSON.parse(result.value);
+                        const msgs = JSON.parse(messagesStr);
                         if (Array.isArray(msgs)) {
                             setMessages(msgs);
                         }
@@ -670,25 +659,25 @@
                 }
             };
 
-            const updateOnlineStatus = async () => {
+            const updateOnlineStatus = () => {
                 const now = Date.now();
-                await Storage.set(`online:${username}`, now.toString(), true);
+                Storage.set(`online:${username}`, now.toString());
 
-                const listResult = await Storage.list('online:', true);
-                if (listResult && listResult.keys) {
-                    const users = new Set();
-                    for (const key of listResult.keys) {
-                        const result = await Storage.get(key, true);
-                        if (result && result.value) {
-                            const lastSeen = parseInt(result.value);
-                            if (now - lastSeen < 15000) { // 15초 이내
-                                const user = key.replace('online:', '');
-                                users.add(user);
-                            }
+                const keys = Storage.list('online:');
+                const users = new Set();
+                
+                keys.forEach(key => {
+                    const lastSeenStr = Storage.get(key);
+                    if (lastSeenStr) {
+                        const lastSeen = parseInt(lastSeenStr);
+                        if (now - lastSeen < 10000) { // 10초 이내
+                            const user = key.replace('online:', '');
+                            users.add(user);
                         }
                     }
-                    setOnlineUsers(users);
-                }
+                });
+                
+                setOnlineUsers(users);
             };
 
             const sendMessage = async (e) => {
@@ -718,10 +707,10 @@
 
                     // 현재 메시지 불러오기
                     let currentMessages = [];
-                    const result = await Storage.get('chat:messages', true);
-                    if (result && result.value) {
+                    const messagesStr = Storage.get('chat:messages');
+                    if (messagesStr) {
                         try {
-                            currentMessages = JSON.parse(result.value);
+                            currentMessages = JSON.parse(messagesStr);
                             if (!Array.isArray(currentMessages)) {
                                 currentMessages = [];
                             }
@@ -737,7 +726,7 @@
                         updatedMessages.splice(0, updatedMessages.length - 100);
                     }
 
-                    await Storage.set('chat:messages', JSON.stringify(updatedMessages), true, 5);
+                    Storage.set('chat:messages', JSON.stringify(updatedMessages));
                     
                     setMessages(updatedMessages);
                     setInputMessage('');
@@ -762,8 +751,8 @@
                 }
             };
 
-            const handleLogout = async () => {
-                await Storage.delete(`online:${username}`, true);
+            const handleLogout = () => {
+                Storage.delete(`online:${username}`);
                 onLogout();
             };
 
