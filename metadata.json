@@ -1,0 +1,5 @@
+
+{
+  "name": "CatchMind Realtime",
+  "description": "A real-time multiplayer drawing and guessing game built with React, Tailwind, and Firebase Realtime Database. Features room systems, canvas synchronization, live chat guessing, and scoreboard logic."
+}
